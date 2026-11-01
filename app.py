@@ -75,41 +75,34 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("✨ Gemini Quant : 카카오톡 자동전송 종가매매 마스터")
+st.title("✨ Gemini Quant : 디스코드 자동전송 종가매매 마스터")
 
 # ==========================================
-# 📱 카카오톡 메시지 전송 함수 설정
+# 🎮 디스코드 웹훅 메시지 전송 설정
 # ==========================================
-KAKAO_TOKEN = "YOUR_KAKAO_ACCESS_TOKEN_HERE"
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1566474178763300884/0xBS4n8nJHQ7aDQ8KEaVpulMLYdAjw4W8ILwLoqwdsO-esLg9v28CQR-pc-LFFyTIdxN"
 
-def send_kakao_message(text_content):
-    if KAKAO_TOKEN == "YOUR_KAKAO_ACCESS_TOKEN_HERE":
-        print("⚠️ 카카오 액세스 토큰이 설정되지 않았습니다.")
+def send_discord_message(text_content):
+    if not DISCORD_WEBHOOK_URL:
+        print("⚠️ 디스코드 웹훅 URL이 설정되지 않았습니다.")
         return False
     
-    header = {"Authorization": f"Bearer {KAKAO_TOKEN}"}
-    url = "https://kapi.kakao.com/v2/api/talk/memo/default/send"
-    
-    template = {
-        "object_type": "text",
-        "text": text_content,
-        "link": {
-            "web_url": "https://developers.kakao.com",
-            "mobile_web_url": "https://developers.kakao.com"
-        }
+    payload = {
+        "content": text_content
     }
     
-    response = requests.post(url, headers=header, data={"template_object": str(template).replace("'", '"')})
-    return response.status_code == 200
+    response = requests.post(DISCORD_WEBHOOK_URL, json=payload)
+    return response.status_code == 204  # 디스코드는 성공 시 204 코드를 반환합니다.
 
-# ==========================================
+
+# =========================================
 # 🗂️ 사이드바 메뉴 및 종목 유동성 풀 정의
-# ==========================================
+# =========================================
 st.sidebar.header("🧭 메인 네비게이션 메뉴")
 menu_choice = st.sidebar.selectbox(
     "원하시는 모드를 선택하세요:",
     [
-        "1. 종가매매 스캐너 (카카오 자동전송 연동)",
+        "1. 종가매매 스캐너 (디스코드 자동전송 연동)",
         "2. AI 장중 수급 집중 스캐너 & 비주얼 차트"
     ]
 )
@@ -227,26 +220,28 @@ def run_ai_explorer_vwap(pool_dict, is_us):
                 scanned_results.append(res)
     return pd.DataFrame(scanned_results)
 
-
 # ==========================================
-# ⏰ 백그라운드 스케줄러 (평일 15:25 자동 스캔 및 카카오톡 전송)
+# ⏰ 백그라운드 스케줄러 (평일 15:25 자동 스캔 및 디스코드 전송)
 # ==========================================
-def scheduled_closing_scan_and_kakao():
+def scheduled_closing_scan_and_discord():
     df_result = run_ai_explorer_vwap(KOREAN_UNIVERSE, False)
     if not df_result.empty:
         df_success = df_result[df_result['AI 매매 시그널'].str.contains("🔥")].copy()
         if not df_success.empty:
-            msg = "[🔥 Gemini Quant 종가매매 알림]\n평일 15:25 국내 주도주 스캔 결과:\n\n"
+            msg = "🚨 **[Gemini Quant 종가매매 자동 스캐너 리포트]**\n⏰ 평일 15:25 자동 포착 리스트:\n\n"
             for _, row in df_success.iterrows():
-                msg += f"- {row['종목명']} ({row['심볼']}) | 등락률: +{row['등락률(%)']}%\n"
-            send_kakao_message(msg)
+                msg += f"- `{row['종목명']}` ({row['심볼']}) | 현재가: {row['현재가']} | 등락률: **+{row['등락률(%)']}%**\n"
+            send_discord_message(msg)
         else:
-            send_kakao_message("[Gemini Quant] 오늘 15:25 국내 종가매매 조건(거래량 폭증+VWAP)을 충족한 종목이 없습니다.")
+            # 포착된 종목이 없을 때도 알림 전송
+            send_discord_message(f"📊 **[Gemini Quant 종가매매 스캐너]** ({datetime.datetime.now().strftime('%Y-%m-%d %H:%M')})\n현재 조건(거래량 폭증+VWAP)을 충족한 주도주가 없습니다.")
+    else:
+        send_discord_message(f"📊 **[Gemini Quant 종가매매 스캐너]** ({datetime.datetime.now().strftime('%Y-%m-%d %H:%M')})\n데이터 수집 결과 포착된 종목이 없습니다.")
 
 @st.cache_resource
 def init_scheduler():
     scheduler = BackgroundScheduler()
-    scheduler.add_job(scheduled_closing_scan_and_kakao, 'cron', day_of_week='mon-fri', hour=15, minute=25, timezone='Asia/Seoul')
+    scheduler.add_job(scheduled_closing_scan_and_discord, 'cron', day_of_week='mon-fri', hour=15, minute=25, timezone='Asia/Seoul')
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown())
     return scheduler
@@ -256,12 +251,11 @@ try:
 except Exception:
     pass
 
-
 # ==============================================================================
 # [MENU 1] 종가매매 스캐너
 # ==============================================================================
 if menu_choice.startswith("1."):
-    st.markdown("##### 🚀 거래량 폭증 유동성 스캔 + VWAP 추세 검증 (카카오 자동전송 연동)")
+    st.markdown("##### 🚀 거래량 폭증 유동성 스캔 + VWAP 추세 검증 (디스코드 자동전송 연동)")
 
     st.sidebar.markdown("---")
     st.sidebar.header("⚙️ 스캐너 설정")
@@ -306,7 +300,7 @@ if menu_choice.startswith("1."):
     with col_btn1:
         run_scan_btn = st.button("🔥 통합 종가매매 탐색기 실행")
     with col_btn2:
-        test_kakao_btn = st.button("📲 현재 포착 리스트 카카오톡으로 즉시 전송 테스트")
+        test_discord_btn = st.button("📲 현재 포착 리스트 디스코드 채널로 즉시 전송 테스트")
 
     if run_scan_btn:
         with st.spinner("스캔 중..."):
@@ -319,18 +313,24 @@ if menu_choice.startswith("1."):
     df_scanned_1 = st.session_state['explorer_df_1']
     df_success_1 = df_scanned_1[df_scanned_1['AI 매매 시그널'].str.contains("🔥")].copy() if not df_scanned_1.empty else pd.DataFrame()
 
-    if test_kakao_btn:
+    if test_discord_btn:
         if not df_success_1.empty:
-            msg = "[🔥 Gemini Quant 즉시 전송 테스트]\n종가매매 포착 리스트:\n\n"
+            msg = "🚨 **[Gemini Quant 디스코드 즉시 전송 테스트]**\n종가매매 포착 리스트:\n\n"
             for _, row in df_success_1.iterrows():
-                msg += f"- {row['종목명']} ({row['심볼']}) | 등락률: +{row['등락률(%)']}%\n"
-            success = send_kakao_message(msg)
+                msg += f"- `{row['종목명']}` ({row['심볼']}) | 현재가: {row['현재가']} | 등락률: **+{row['등락률(%)']}%**\n"
+            success = send_discord_message(msg)
             if success:
-                st.success("✨ 카카오톡 '나와의 채팅'으로 리스트 전송 성공!")
+                st.success("✨ 디스코드 채널로 리포트 전송 성공!")
             else:
-                st.error("⚠️ 카카오톡 전송 실패. 액세스 토큰(KAKAO_TOKEN)을 확인해 주세요.")
+                st.error("⚠️ 디스코드 전송 실패. 웹훅 주소를 확인해 주세요.")
         else:
-            st.warning("전송할 포착된 종목이 없습니다.")
+            # 종목이 없을 때도 "포착된 주식이 없습니다" 메시지를 디스코드로 전송
+            msg = f"📊 **[Gemini Quant 테스트]**\n현재 조건에 부합하는 포착된 주식이 없습니다."
+            success = send_discord_message(msg)
+            if success:
+                st.info("ℹ️ 포착된 종목이 없어 '포착된 주식이 없습니다' 메시지를 디스코드로 전송했습니다.")
+            else:
+                st.error("⚠️ 디스코드 전송 실패.")
 
     st.markdown("### 📋 종가매매 포착 리스트")
     if not df_success_1.empty:
@@ -371,7 +371,6 @@ if menu_choice.startswith("1."):
                 st.markdown(f"- [{e.title}]({e.link})")
         except Exception:
             pass
-
 
 # ==============================================================================
 # [MENU 2] AI 장중 수급 집중 스캐너 & 비주얼 차트
