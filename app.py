@@ -6,8 +6,6 @@ import urllib.parse
 import datetime
 import requests
 from concurrent.futures import ThreadPoolExecutor
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
 
@@ -84,13 +82,8 @@ DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1566474178763300884/0xBS
 
 def send_discord_message(text_content):
     if not DISCORD_WEBHOOK_URL:
-        print("⚠️ 디스코드 웹훅 URL이 설정되지 않았습니다.")
         return False
-    
-    payload = {
-        "content": text_content
-    }
-    
+    payload = {"content": text_content}
     response = requests.post(DISCORD_WEBHOOK_URL, json=payload)
     return response.status_code == 204
 
@@ -103,7 +96,7 @@ menu_choice = st.sidebar.selectbox(
     "원하시는 모드를 선택하세요:",
     [
         "1. 종가매매 스캐너 (디스코드 자동전송 연동)",
-        "2. AI 장중 수급 집중 스캐너 & 비주얼 차트"
+        "2. AI 장중 수급 집중 스캐너 & 실시간 트레이딩뷰 차트"
     ]
 )
 
@@ -167,8 +160,7 @@ def fetch_single_stock_vwap(item_tuple, is_us):
     ticker = info["ticker"]
     try:
         stock = yf.Ticker(ticker)
-        # 강제로 최신 데이터를 가져오기 위해 period 설정 및 프록시/세션 우회 효과 부여
-        df_hist = stock.history(period="60d", proxy=None)
+        df_hist = stock.history(period="60d", auto_adjust=True)
         if len(df_hist) >= 20:
             current_price = float(df_hist['Close'].iloc[-1])
             prev_price = float(df_hist['Close'].iloc[-2])
@@ -372,11 +364,11 @@ if menu_choice.startswith("1."):
             pass
 
 # ==============================================================================
-# [MENU 2] AI 장중 수급 집중 스캐너 & 비주얼 차트
+# [MENU 2] AI 장중 수급 집중 스캐너 & 실시간 트레이딩뷰 차트 (자유 검색 및 직관적 타이밍 배지 포함)
 # ==============================================================================
 elif menu_choice.startswith("2."):
-    st.markdown("### 🔥 AI 장중 수급 집중 스캐너 & 비주얼 차트 분석")
-    st.info("💡 **[장중 수급 스캔 실행]** 버튼을 누르시면, 현재 시장에서 **평균 거래량 대비 1.5배 이상 돈이 쏠리며 급등하는 주도주**들을 실시간으로 발굴하여 리스트업하고 차트와 타점을 연동해 줍니다.")
+    st.markdown("### 🔥 AI 장중 수급 집중 스캐너 & 실시간 트레이딩뷰 차트")
+    st.info("💡 **[장중 수급 스캔 실행]** 버튼을 누르거나, 아래 **[직접 티커 검색]** 창에 원하시는 주식 심볼(예: TSLA, AAPL, 005930.KS)을 입력하시면 즉시 실시간 차트와 명확한 매매 타이밍을 제공해 줍니다.")
 
     st.sidebar.markdown("---")
     st.sidebar.header("⚙️ 장중 스캐너 설정")
@@ -401,133 +393,126 @@ elif menu_choice.startswith("2."):
     df_surge_raw = st.session_state['surge_df_2']
     df_surge_success = df_surge_raw[df_surge_raw['AI 매매 시그널'].str.contains("🔥")].copy() if not df_surge_raw.empty else pd.DataFrame()
 
-    st.markdown("### 📋 장중 수급 폭증(Volume Surge) 포착 리스트")
+    st.markdown("### 📋 장중 수급 폭증(Volume Surge) 포착 리스트 및 자유 검색")
     
     selected_ticker_2 = ""
     selected_name_2 = ""
+    selected_tv_symbol_2 = "NASDAQ:TSLA"
 
-    if not df_surge_success.empty:
-        df_sorted_2 = df_surge_success.sort_values(by="등락률(%)", ascending=False).reset_index(drop=True)
-        df_sorted_2.index = df_sorted_2.index + 1
-        st.dataframe(df_sorted_2.drop(columns=['raw_price']), use_container_width=True)
-        
-        chosen_row_name = st.selectbox("포착된 주도주 중 분석할 종목 선택:", df_sorted_2['종목명'].tolist())
-        matched_item = df_sorted_2[df_sorted_2['종목명'] == chosen_row_name].iloc[0]
-        selected_ticker_2 = matched_item['심볼']
-        selected_name_2 = chosen_row_name
-    else:
-        st.warning("⚠️ 현재 조건(거래량 1.5배 이상 폭증 + VWAP 돌파)을 충족하는 장중 수급 종목이 없습니다. 직접 티커를 검색해서 분석할 수도 있습니다.")
-        manual_input = st.text_input("🔍 직접 종목 티커 검색 (예: TSLA, AAPL, 005930.KS):", "TSLA")
+    # 유저가 원하는 주식을 언제든 직접 검색할 수 있는 입력창을 최우선 배치
+    manual_input = st.text_input("🔍 원하시는 종목 직접 검색 (예: TSLA, AAPL, NVDA, 005930.KS):", "TSLA", key="manual_t2")
+    
+    if manual_input:
         selected_ticker_2 = manual_input.strip().upper()
         selected_name_2 = selected_ticker_2
+        
+        # 트레이딩뷰 심볼 자동 매핑 로직
+        if selected_ticker_2.endswith(".KS"):
+            code = selected_ticker_2.split(".")[0]
+            selected_tv_symbol_2 = f"KRX:{code}"
+        elif selected_ticker_2.endswith(".KQ"):
+            code = selected_ticker_2.split(".")[0]
+            selected_tv_symbol_2 = f"KOSDAQ:{code}"
+        elif selected_ticker_2.isdigit() and len(selected_ticker_2) == 6:
+            selected_tv_symbol_2 = f"KRX:{selected_ticker_2}"
+            selected_ticker_2 = f"{selected_ticker_2}.KS"
+        else:
+            # 미국 주식 주요 거래소 판별
+            if selected_ticker_2 in ["SOXL", "PLTR", "IONQ", "RBLX", "U", "SPY", "QQQ"]:
+                selected_tv_symbol_2 = f"NYSE:{selected_ticker_2}"
+            else:
+                selected_tv_symbol_2 = f"NASDAQ:{selected_ticker_2}"
+    else:
+        if not df_surge_success.empty:
+            df_sorted_2 = df_surge_success.sort_values(by="등락률(%)", ascending=False).reset_index(drop=True)
+            df_sorted_2.index = df_sorted_2.index + 1
+            st.dataframe(df_sorted_2.drop(columns=['raw_price']), use_container_width=True)
+            
+            chosen_row_name = st.selectbox("포착된 주도주 중 분석할 종목 선택:", df_sorted_2['종목명'].tolist(), key="sel_name_2")
+            matched_item = df_sorted_2[df_sorted_2['종목명'] == chosen_row_name].iloc[0]
+            selected_ticker_2 = matched_item['심볼']
+            selected_name_2 = chosen_row_name
+            
+            full_pool = {**KOREAN_UNIVERSE, **US_EXTENDED_UNIVERSE, **BUDGET_UNIVERSE}
+            for k, v in full_pool.items():
+                if v["ticker"] == selected_ticker_2:
+                    selected_tv_symbol_2 = v["tv_symbol"]
+                    break
 
     is_us_tab2 = not (selected_ticker_2.endswith(".KS") or selected_ticker_2.endswith(".KQ") or selected_ticker_2.isdigit())
 
-    if st.button("🔄 실시간 최신 데이터 강제 갱신"):
-        st.rerun()
+    # 실시간 트레이딩뷰 위젯 렌더링
+    import streamlit.components.v1 as components
+    tv_html_2 = f"""
+    <div class="tradingview-widget-container" style="height:100%;width:100%">
+      <div class="tradingview-widget-container__widget" style="height:calc(100% - 32px);width:100%"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
+      {{
+        "width": "100%", "height": "550", "symbol": "{selected_tv_symbol_2}",
+        "interval": "15", "timezone": "Asia/Seoul", "theme": "dark", "style": "1", "locale": "kr"
+      }}
+      </script>
+    </div>
+    """
+    components.html(tv_html_2, height=560)
 
-    # 캐시 완전 차단 및 실시간 타임스탬프를 부여한 데이터 생성 함수
-    def generate_ai_visual_chart(ticker, is_us):
+    # 실시간 타이밍 분석 및 시각적 가이드 생성
+    def get_realtime_timing_guide(ticker, is_us):
         try:
             tk = yf.Ticker(ticker)
-            # 매번 새로운 세션 요청처럼 처리하기 위해 period와 함께 강제 갱신 유도
-            df = tk.history(period="60d", auto_adjust=True)
-            if not df.empty and len(df) > 10:
-                tp = (df['High'] + df['Low'] + df['Close']) / 3
-                df['VWAP'] = (tp * df['Volume']).cumsum() / df['Volume'].cumsum()
+            df = tk.history(period="15d", auto_adjust=True)
+            if not df.empty and len(df) >= 5:
+                cur_p = float(df['Close'].iloc[-1])
+                prev_p = float(df['Close'].iloc[-2])
+                diff_pct = round(((cur_p - prev_p) / prev_p) * 100, 2)
                 
-                df['Vol_MA20'] = df['Volume'].rolling(window=20).mean()
-                df['Vol_Surge'] = df['Volume'] >= (df['Vol_MA20'] * 1.5)
-                df['VWAP_Diff'] = (df['Close'] - df['VWAP']) / df['VWAP']
+                typical_price = (df['High'] + df['Low'] + df['Close']) / 3
+                vwap = float((typical_price * df['Volume']).cumsum().iloc[-1] / df['Volume'].cumsum().iloc[-1])
+                ema5 = float(df['Close'].ewm(span=5, adjust=False).mean().iloc[-1])
                 
-                df['Signal'] = 0
-                df.loc[(df['Close'] > df['VWAP']) & (df['Close'].shift(1) <= df['VWAP'].shift(1)), 'Signal'] = 1  
-                df.loc[(df['Close'] < df['VWAP']) & (df['Close'].shift(1) >= df['VWAP'].shift(1)), 'Signal'] = -1 
+                # 명확한 타이밍 배지 판별
+                if cur_p >= vwap and cur_p >= ema5:
+                    badge = "🚀 [적극 매수(롱) 타이밍]"
+                    desc = "현재 주가가 핵심 VWAP 선과 단기 이평선(EMA5) 위에 안착해 있습니다. **지금이 강한 수급 유입 구간입니다!**"
+                elif cur_p >= vwap * 0.99:
+                    badge = "⏳ [눌림목 관망 타이밍]"
+                    desc = "VWAP 지지선 부근에서 횡보 중입니다. 급등 전 분할 매수나 반등 타이밍을 노려보세요."
+                else:
+                    badge = "⚠️ [하방 이탈 / 매수 보류]"
+                    desc = "주가가 VWAP 아래로 처져 있습니다. 추세가 회복될 때까지 관망을 권장합니다."
+
+                tp_price = cur_p * 1.045
+                sl_price = cur_p * 0.970
                 
-                dynamic_tp_pct = 0.03 + (df['VWAP_Diff'] * 1.2).clip(0, 0.07)
-                df['TP_Price'] = df['Close'] * (1 + dynamic_tp_pct)
-                df['SL_Price'] = df['Close'] * 0.965
-                return df
+                cur_fmt = f"${cur_p:,.2f}" if is_us else f"{cur_p:,.0f} 원"
+                tp_fmt = f"${tp_price:,.2f}" if is_us else f"{tp_price:,.0f} 원"
+                sl_fmt = f"${sl_price:,.2f}" if is_us else f"{sl_price:,.0f} 원"
+                vwap_fmt = f"${vwap:,.2f}" if is_us else f"{vwap:,.0f} 원"
+                
+                return badge, desc, cur_fmt, diff_pct, tp_fmt, sl_fmt, vwap_fmt
         except Exception:
             pass
-        return pd.DataFrame()
+        return "⚠️ 데이터 조회 중", "입력하신 티커를 확인해 주세요.", "N/A", 0.0, "N/A", "N/A", "N/A"
 
-    if selected_ticker_2:
-        df_chart = generate_ai_visual_chart(selected_ticker_2, is_us_tab2)
+    badge, desc, cur_fmt, diff_pct, tp_fmt, sl_fmt, vwap_fmt = get_realtime_timing_guide(selected_ticker_2, is_us_tab2)
 
-        if not df_chart.empty:
-            cur_p = float(df_chart['Close'].iloc[-1])
-            prev_p = float(df_chart['Close'].iloc[-2])
-            diff_pct = round(((cur_p - prev_p) / prev_p) * 100, 2)
-            cur_vwap = float(df_chart['VWAP'].iloc[-1])
-            
-            current_diff = max(0.0, (cur_p - cur_vwap) / cur_vwap)
-            current_tp_rate = min(0.10, max(0.03, 0.03 + (current_diff * 1.2)))
+    st.markdown("---")
+    st.markdown(f"### 🎯 [{selected_name_2}] AI 실시간 매매 타이밍 & 타점 가이드")
+    
+    # 직관적인 배지 형태로 타이밍 제시
+    if "🚀" in badge:
+        st.success(f"**{badge}**\n\n{desc}")
+    elif "⏳" in badge:
+        st.info(f"**{badge}**\n\n{desc}")
+    else:
+        st.error(f"**{badge}**\n\n{desc}")
 
-            cur_fmt = f"${cur_p:,.2f}" if is_us_tab2 else f"{cur_p:,.0f} 원"
-            vwap_fmt = f"${cur_vwap:,.2f}" if is_us_tab2 else f"{cur_vwap:,.0f} 원"
-            dynamic_tp_price = cur_p * (1 + current_tp_rate)
-            sl_price = cur_p * 0.965
-
-            m1, m2, m3 = st.columns(3)
-            m1.metric(f"📌 [{selected_name_2}] 현재 종가", cur_fmt, f"{diff_pct:+.2f}%")
-            m2.metric("📊 VWAP 기준가", vwap_fmt)
-            m3.metric(f"🎯 AI 동적 익절 목표가 (TP +{current_tp_rate*100:.1f}%)", f"${dynamic_tp_price:,.2f}" if is_us_tab2 else f"${dynamic_tp_price:,.0f} 원")
-
-            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.75, 0.25])
-            
-            fig.add_trace(go.Candlestick(
-                x=df_chart.index, open=df_chart['Open'], high=df_chart['High'], low=df_chart['Low'], close=df_chart['Close'],
-                increasing_line_color='#FF3B30', decreasing_line_color='#007AFF', 
-                increasing_fillcolor='#FF3B30', decreasing_fillcolor='#007AFF',
-                name="주가 캔들"
-            ), row=1, col=1)
-            
-            fig.add_trace(go.Scatter(
-                x=df_chart.index, y=df_chart['VWAP'], line=dict(color='#34C759', width=2), name='VWAP 선'
-            ), row=1, col=1)
-            
-            long_signals = df_chart[df_chart['Signal'] == 1]
-            if not long_signals.empty:
-                long_texts = [f"장중수급 롱: {p:,.2f}" if is_us_tab2 else f"장중수급 롱: {p:,.0f}" for p in long_signals['Close']]
-                fig.add_trace(go.Scatter(
-                    mode="markers+text", x=long_signals.index, y=long_signals['Low'] * 0.975,
-                    marker=dict(symbol="triangle-up", size=14, color="#34C759"),
-                    text=long_texts, textposition="bottom center", name="장중수급 롱 진입"
-                ), row=1, col=1)
-
-            tp_signals = df_chart[df_chart['Signal'] == -1]
-            if not tp_signals.empty:
-                tp_texts = [f"익절TP: {tp:,.2f}" if is_us_tab2 else f"익절TP: {tp:,.0f}" for tp in tp_signals['TP_Price']]
-                fig.add_trace(go.Scatter(
-                    mode="markers+text", x=tp_signals.index, y=tp_signals['High'] * 1.025,
-                    marker=dict(symbol="triangle-down", size=14, color="#FF3B30"),
-                    text=tp_texts, textposition="top center", name="AI 익절(TP)"
-                ), row=1, col=1)
-
-            colors = ['#FF3B30' if row['Close'] >= row['Open'] else '#007AFF' for _, row in df_chart.iterrows()]
-            fig.add_trace(go.Bar(x=df_chart.index, y=df_chart['Volume'], marker_color=colors, name='거래량'), row=2, col=1)
-
-            fig.update_layout(
-                height=600, xaxis_rangeslider_visible=False,
-                paper_bgcolor='#FFFFFF', plot_bgcolor='#FFFFFF',
-                font=dict(color='#222222'),
-                margin=dict(l=10, r=10, t=10, b=10),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-            )
-            fig.update_xaxes(gridcolor='#EFEFEF')
-            fig.update_yaxes(gridcolor='#EFEFEF')
-
-            st.plotly_chart(fig, use_container_width=True)
-
-            st.markdown("---")
-            st.markdown(f"### 📋 [{selected_name_2}] 장중 수급형 AI 타점 요약 가이드")
-            col_g1, col_g2, col_g3 = st.columns(3)
-            with col_g1:
-                st.success(f"🟢 **추천 롱 진입가**\n\n**{cur_fmt}**\n\n*(장중 수급 쏠림 + VWAP 돌파)*")
-            with col_g2:
-                st.info(f"🎯 **AI 동적 익절 목표가 (TP +{current_tp_rate*100:.1f}%)**\n\n**{f'${dynamic_tp_price:,.2f}' if is_us_tab2 else f'{dynamic_tp_price:,.0f} 원'}**\n\n*(추세 연동형 최대 10%)*")
-            with col_g3:
-                st.error(f"🔴 **손절가 (SL -3.5%)**\n\n**{f'${sl_price:,.2f}' if is_us_tab2 else f'{sl_price:,.0f} 원'}**\n\n*(휩소 방어 리스크 관리)*")
-        else:
-            st.warning(f"⚠️ 입력하신 종목 [{selected_ticker_2}]의 차트 데이터를 불러올 수 없습니다.")
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.success(f"🟢 **추천 롱 진입 기준가**\n\n**{cur_fmt}**\n\n*(등락률 {diff_pct:+.2f}%)*")
+    with m2:
+        st.metric("📊 기준 VWAP 선", vwap_fmt)
+    with m3:
+        st.info(f"🎯 **AI 익절 목표가 (TP +4.5%)**\n\n**{tp_fmt}**")
+    with m4:
+        st.error(f"🔴 **손절가 (SL -3.0%)**\n\n**{sl_fmt}**")
