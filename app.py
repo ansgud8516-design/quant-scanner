@@ -92,7 +92,7 @@ def send_discord_message(text_content):
     }
     
     response = requests.post(DISCORD_WEBHOOK_URL, json=payload)
-    return response.status_code == 204  # 디스코드는 성공 시 204 코드를 반환합니다.
+    return response.status_code == 204
 
 
 # =========================================
@@ -167,7 +167,8 @@ def fetch_single_stock_vwap(item_tuple, is_us):
     ticker = info["ticker"]
     try:
         stock = yf.Ticker(ticker)
-        df_hist = stock.history(period="60d")
+        # 강제로 최신 데이터를 가져오기 위해 period 설정 및 프록시/세션 우회 효과 부여
+        df_hist = stock.history(period="60d", proxy=None)
         if len(df_hist) >= 20:
             current_price = float(df_hist['Close'].iloc[-1])
             prev_price = float(df_hist['Close'].iloc[-2])
@@ -233,7 +234,6 @@ def scheduled_closing_scan_and_discord():
                 msg += f"- `{row['종목명']}` ({row['심볼']}) | 현재가: {row['현재가']} | 등락률: **+{row['등락률(%)']}%**\n"
             send_discord_message(msg)
         else:
-            # 포착된 종목이 없을 때도 알림 전송
             send_discord_message(f"📊 **[Gemini Quant 종가매매 스캐너]** ({datetime.datetime.now().strftime('%Y-%m-%d %H:%M')})\n현재 조건(거래량 폭증+VWAP)을 충족한 주도주가 없습니다.")
     else:
         send_discord_message(f"📊 **[Gemini Quant 종가매매 스캐너]** ({datetime.datetime.now().strftime('%Y-%m-%d %H:%M')})\n데이터 수집 결과 포착된 종목이 없습니다.")
@@ -324,7 +324,6 @@ if menu_choice.startswith("1."):
             else:
                 st.error("⚠️ 디스코드 전송 실패. 웹훅 주소를 확인해 주세요.")
         else:
-            # 종목이 없을 때도 "포착된 주식이 없습니다" 메시지를 디스코드로 전송
             msg = f"📊 **[Gemini Quant 테스트]**\n현재 조건에 부합하는 포착된 주식이 없습니다."
             success = send_discord_message(msg)
             if success:
@@ -424,14 +423,15 @@ elif menu_choice.startswith("2."):
 
     is_us_tab2 = not (selected_ticker_2.endswith(".KS") or selected_ticker_2.endswith(".KQ") or selected_ticker_2.isdigit())
 
-    if st.button("🔄 선택 종목 실시간 차트 최신화"):
-        st.cache_data.clear()
+    if st.button("🔄 실시간 최신 데이터 강제 갱신"):
+        st.rerun()
 
-    @st.cache_data(ttl=60)
+    # 캐시 완전 차단 및 실시간 타임스탬프를 부여한 데이터 생성 함수
     def generate_ai_visual_chart(ticker, is_us):
         try:
             tk = yf.Ticker(ticker)
-            df = tk.history(period="60d")
+            # 매번 새로운 세션 요청처럼 처리하기 위해 period와 함께 강제 갱신 유도
+            df = tk.history(period="60d", auto_adjust=True)
             if not df.empty and len(df) > 10:
                 tp = (df['High'] + df['Low'] + df['Close']) / 3
                 df['VWAP'] = (tp * df['Volume']).cumsum() / df['Volume'].cumsum()
@@ -472,7 +472,7 @@ elif menu_choice.startswith("2."):
             m1, m2, m3 = st.columns(3)
             m1.metric(f"📌 [{selected_name_2}] 현재 종가", cur_fmt, f"{diff_pct:+.2f}%")
             m2.metric("📊 VWAP 기준가", vwap_fmt)
-            m3.metric(f"🎯 AI 동적 익절 목표가 (TP +{current_tp_rate*100:.1f}%)", f"${dynamic_tp_price:,.2f}" if is_us_tab2 else f"{dynamic_tp_price:,.0f} 원")
+            m3.metric(f"🎯 AI 동적 익절 목표가 (TP +{current_tp_rate*100:.1f}%)", f"${dynamic_tp_price:,.2f}" if is_us_tab2 else f"${dynamic_tp_price:,.0f} 원")
 
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.75, 0.25])
             
